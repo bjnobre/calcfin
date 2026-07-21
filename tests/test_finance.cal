@@ -1,0 +1,37 @@
+define assert_close(label, actual, expected, tolerance) {
+    if (abs(actual - expected) > tolerance) {
+        printf("FAIL %s: expected %d, got %d\n", label, expected, actual);
+        return 1;
+    }
+    return 0;
+}
+
+failures = 0;
+tolerance = 1e-8;
+
+failures += assert_close("fv", fv(.05, 10, 0, -1000, 0, 12), 1628.894626777441, tolerance);
+failures += assert_close("pv", pv(.05, 10, 0, 1628.894626777441, 0, 12), -1000, tolerance);
+failures += assert_close("pmt", pmt(.01, 12, 1000, 0, 0, 12), -88.848788678342, tolerance);
+failures += assert_close("pmt beginning", pmt(.01, 12, 1000, 0, 1, 12), -87.969097701329, tolerance);
+failures += assert_close("nper", nper(.05, 0, -1000, 1628.894626777441, 0, 12), 10, tolerance);
+
+failures += assert_close("zero-rate fv", fv(0, 10, -100, 0, 0), 1000, tolerance);
+failures += assert_close("zero-rate pv", pv(0, 10, -100, 0, 0), 1000, tolerance);
+failures += assert_close("zero-rate pmt", pmt(0, 10, 1000, 0, 0), -100, tolerance);
+
+failures += assert_close("effective rate", effective_rate(.12, 12, 12), .126825030132, tolerance);
+failures += assert_close("nominal rate", nominal_rate(.126825030132, 12, 12), .12, tolerance);
+
+mat flows[] = {-1000, 400, 400, 400};
+failures += assert_close("npv", npv(.1, flows, 4, 12), -5.259203606311, tolerance);
+failures += assert_close("irr", irr(flows, 4, .1, 12), .097010257404, tolerance);
+
+mat mixed[] = {-120000, 39000, 30000, 21000, 37000, 46000};
+failures += assert_close("mirr", mirr(mixed, 6, .1, .12, 12), .126094130366, tolerance);
+
+/* Optional precision defaults to 2 and rounds, rather than truncating. */
+failures += assert_close("default precision", fv(.05, 10, 0, -1000, 0), 1628.89, 0);
+failures += assert_close("explicit precision", fv(.05, 10, 0, -1000, 0, 6), 1628.894627, 0);
+
+if (failures == 0)
+    print "All finance tests passed";

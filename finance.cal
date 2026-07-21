@@ -1,0 +1,198 @@
+/*
+ * finance.cal - financial functions for Calc
+ *
+ * Load with: read "finance.cal";
+ *
+ * Rates are decimals per period (5% is .05).  The type argument used by
+ * pv(), fv(), and pmt() is 0 for end-of-period payments and 1 for
+ * beginning-of-period payments.  Money paid and received use opposite signs.
+ * The final precision argument is optional and defaults to 2 decimal places.
+ */
+
+define fin_precision(precision) {
+    if (isnull(precision))
+        return 2;
+    if (!isint(precision) || precision < 0)
+        return newerror("precision must be a non-negative integer");
+    return precision;
+}
+
+define fin_epsilon(precision) {
+    local digits;
+
+    digits = precision + 10;
+    if (digits < 30)
+        digits = 30;
+    return 10^-digits;
+}
+
+define fin_pow(x, y, precision) {
+    if (isint(y))
+        return x^y;
+    return power(x, y, fin_epsilon(precision));
+}
+
+/* Future value: fv(rate, nper, payment, present, type [, precision]) */
+define fv(rate, nper, payment, present, type, precision) {
+    local factor, annuity, result;
+
+    if (param(0) < 6)
+        precision = 2;
+    precision = fin_precision(precision);
+    if (rate == 0) {
+        result = -(present + payment * nper);
+    } else {
+        factor = fin_pow(1 + rate, nper, precision);
+        annuity = (factor - 1) / rate;
+        result = -(present * factor + payment * (1 + rate * type) * annuity);
+    }
+    return round(result, precision, 24);
+}
+
+/* Present value: pv(rate, nper, payment, future, type [, precision]) */
+define pv(rate, nper, payment, future, type, precision) {
+    local factor, annuity, result;
+
+    if (param(0) < 6)
+        precision = 2;
+    precision = fin_precision(precision);
+    if (rate == 0) {
+        result = -(future + payment * nper);
+    } else {
+        factor = fin_pow(1 + rate, nper, precision);
+        annuity = (factor - 1) / rate;
+        result = -(future + payment * (1 + rate * type) * annuity) / factor;
+    }
+    return round(result, precision, 24);
+}
+
+/* Periodic payment: pmt(rate, nper, present, future, type [, precision]) */
+define pmt(rate, nper, present, future, type, precision) {
+    local factor, annuity, result;
+
+    if (param(0) < 6)
+        precision = 2;
+    precision = fin_precision(precision);
+    if (rate == 0) {
+        result = -(future + present) / nper;
+    } else {
+        factor = fin_pow(1 + rate, nper, precision);
+        annuity = (factor - 1) / rate;
+        result = -(future + present * factor) / ((1 + rate * type) * annuity);
+    }
+    return round(result, precision, 24);
+}
+
+/* Number of periods: nper(rate, payment, present, future, type [, precision]) */
+define nper(rate, payment, present, future, type, precision) {
+    local adjusted_payment, ratio, result, eps;
+
+    if (param(0) < 6)
+        precision = 2;
+    precision = fin_precision(precision);
+    if (rate == 0) {
+        result = -(future + present) / payment;
+    } else {
+        adjusted_payment = payment * (1 + rate * type) / rate;
+        ratio = (adjusted_payment - future) / (present + adjusted_payment);
+        eps = fin_epsilon(precision);
+        result = ln(ratio, eps) / ln(1 + rate, eps);
+    }
+    return round(result, precision, 24);
+}
+
+/* effective_rate(nominal, periods [, precision]) */
+define effective_rate(nominal, periods, precision) {
+    local result;
+
+    if (param(0) < 3)
+        precision = 2;
+    precision = fin_precision(precision);
+    result = fin_pow(1 + nominal / periods, periods, precision) - 1;
+    return round(result, precision, 24);
+}
+
+/* nominal_rate(effective, periods [, precision]) */
+define nominal_rate(effective, periods, precision) {
+    local result;
+
+    if (param(0) < 3)
+        precision = 2;
+    precision = fin_precision(precision);
+    result = periods * (fin_pow(1 + effective, 1 / periods, precision) - 1);
+    return round(result, precision, 24);
+}
+
+/* Cash flows start at index zero (time zero). */
+define npv(rate, cashflows, count, precision) {
+    local i, result, discount;
+
+    if (param(0) < 4)
+        precision = 2;
+    precision = fin_precision(precision);
+    result = 0;
+    discount = 1;
+    for (i = 0; i < count; i++) {
+        if (i > 0)
+            discount *= 1 + rate;
+        result += cashflows[i] / discount;
+    }
+    return round(result, precision, 24);
+}
+
+/* irr(cashflows, count, guess [, precision]) */
+define irr(cashflows, count, guess, precision) {
+    local i, iteration, rate, next_rate, value, derivative, discount, eps;
+
+    if (param(0) < 4)
+        precision = 2;
+    precision = fin_precision(precision);
+    eps = fin_epsilon(precision);
+    rate = guess;
+
+    for (iteration = 0; iteration < 100; iteration++) {
+        if (rate <= -1)
+            rate = -1 + eps;
+
+        value = cashflows[0];
+        derivative = 0;
+        discount = 1;
+        for (i = 1; i < count; i++) {
+            discount *= 1 + rate;
+            value += cashflows[i] / discount;
+            derivative -= i * cashflows[i] / (discount * (1 + rate));
+        }
+
+        if (abs(value) < eps || abs(derivative) < eps)
+            break;
+        next_rate = rate - value / derivative;
+        if (next_rate <= -1)
+            next_rate = (rate - 1 + eps) / 2;
+        if (abs(next_rate - rate) < eps) {
+            rate = next_rate;
+            break;
+        }
+        rate = next_rate;
+    }
+    return round(rate, precision, 24);
+}
+
+/* mirr(cashflows, count, finance_rate, reinvest_rate [, precision]) */
+define mirr(cashflows, count, finance_rate, reinvest_rate, precision) {
+    local i, negative_pv, positive_fv, result;
+
+    if (param(0) < 5)
+        precision = 2;
+    precision = fin_precision(precision);
+    negative_pv = 0;
+    positive_fv = 0;
+    for (i = 0; i < count; i++) {
+        if (cashflows[i] < 0)
+            negative_pv += cashflows[i] / fin_pow(1 + finance_rate, i, precision);
+        if (cashflows[i] > 0)
+            positive_fv += cashflows[i] *
+                fin_pow(1 + reinvest_rate, count - 1 - i, precision);
+    }
+    result = fin_pow(-positive_fv / negative_pv, 1 / (count - 1), precision) - 1;
+    return round(result, precision, 24);
+}
